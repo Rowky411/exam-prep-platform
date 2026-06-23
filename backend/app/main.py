@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 
 from app.db import AsyncSessionLocal, engine
-from app.models import Base, Question, Test
+from app.models import Attempt, Base, Question, Test, UserStats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -315,6 +315,203 @@ async def get_test(test_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 — write path
+# ---------------------------------------------------------------------------
+
+QUEUE_KEY = "queue:attempts"
+
+
+def _score_answer(selected: dict, correct: dict, qtype: str) -> bool:
+    """Score one answer. Pure function — used by both sync endpoint and worker."""
+    if qtype in ("single_mcq", "true_false"):
+        return selected.get("id") == correct.get("id")
+    if qtype == "multi_mcq":
+        return set(selected.get("ids", [])) == set(correct.get("ids", []))
+    if qtype == "numerical":
+        try:
+            sv = float(selected.get("value", ""))
+            cv = float(correct["value"])
+            tol = float(correct.get("tolerance", 0.01))
+            return abs(sv - cv) <= tol
+        except (ValueError, TypeError, KeyError):
+            return False
+    return False
+
+
+class AnswerItem(BaseModel):
+    question_id: str
+    question_version: int
+    selected: dict  # {"id":"b"} | {"ids":["a","c"]} | {"value":"42"}
+
+
+class SubmitAttempts(BaseModel):
+    user_id: str = "demo_user"
+    test_id: str | None = None
+    answers: list[AnswerItem]
+
+
+@app.post("/attempts/sync", status_code=201)
+async def submit_attempts_sync(body: SubmitAttempts):
+    """
+    Phase 5a: synchronous write path.
+    Fetches questions, scores every answer inline, writes attempts + user_stats
+    before returning. Intentionally slow under load — the baseline to beat in 5b.
+    """
+    t0 = time.perf_counter()
+
+    if not body.answers:
+        raise HTTPException(status_code=422, detail="answers list is empty")
+
+    # Fetch all questions (cache → DB batch)
+    qids = [a.question_id for a in body.answers]
+    questions, _, _, db_q = await _fetch_questions_cached(qids)
+    q_map = {q["id"]: q for q in questions}
+
+    # Score each answer
+    results = []
+    for ans in body.answers:
+        q = q_map.get(ans.question_id)
+        if q is None:
+            continue
+        correct = _score_answer(ans.selected, q["correct"], q["type"])
+        results.append({"question_id": ans.question_id, "is_correct": correct, "topic": q["topic"]})
+
+    # Write attempts rows (all scored immediately)
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    attempt_rows = []
+    for ans, res in zip(body.answers, results):
+        attempt_rows.append(Attempt(
+            id=_uuid.uuid4(),
+            user_id=body.user_id,
+            test_id=body.test_id,
+            question_id=ans.question_id,
+            question_version=ans.question_version,
+            selected=ans.selected,
+            is_correct=res["is_correct"],
+            scored_at=now,
+        ))
+
+    # Upsert user_stats
+    async with AsyncSessionLocal() as session:
+        session.add_all(attempt_rows)
+
+        stats = await session.get(UserStats, body.user_id)
+        if stats is None:
+            stats = UserStats(user_id=body.user_id, total_attempted=0, total_correct=0, accuracy_by_topic={})
+            session.add(stats)
+
+        stats.total_attempted += len(results)
+        stats.total_correct += sum(1 for r in results if r["is_correct"])
+
+        acc = dict(stats.accuracy_by_topic or {})
+        for r in results:
+            t = acc.setdefault(r["topic"], {"attempted": 0, "correct": 0})
+            t["attempted"] += 1
+            if r["is_correct"]:
+                t["correct"] += 1
+        stats.accuracy_by_topic = acc
+
+        await session.commit()
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    total = len(results)
+    correct = sum(1 for r in results if r["is_correct"])
+    logger.info(
+        "submit_sync user=%s answers=%d correct=%d db_query_count=%d elapsed_ms=%s",
+        body.user_id, total, correct, db_q + 1, elapsed_ms,
+    )
+
+    return {
+        "mode": "sync",
+        "elapsed_ms": elapsed_ms,
+        "score": {"correct": correct, "total": total, "pct": round(correct / max(total, 1) * 100, 1)},
+        "results": [{"question_id": r["question_id"], "is_correct": r["is_correct"]} for r in results],
+    }
+
+
+@app.post("/attempts", status_code=202)
+async def submit_attempts_async(body: SubmitAttempts):
+    """
+    Phase 5b: async write path.
+    Writes unscored attempt rows immediately, pushes one job per attempt onto
+    the Redis queue, then returns. The worker process scores them in the background.
+    This endpoint stays fast regardless of how many answers are submitted.
+    """
+    t0 = time.perf_counter()
+
+    if not body.answers:
+        raise HTTPException(status_code=422, detail="answers list is empty")
+
+    import uuid as _uuid
+
+    # Persist unscored attempts
+    attempt_rows = [
+        Attempt(
+            id=_uuid.uuid4(),
+            user_id=body.user_id,
+            test_id=body.test_id,
+            question_id=ans.question_id,
+            question_version=ans.question_version,
+            selected=ans.selected,
+            is_correct=None,   # scored by worker
+            scored_at=None,
+        )
+        for ans in body.answers
+    ]
+
+    async with AsyncSessionLocal() as session:
+        session.add_all(attempt_rows)
+        await session.commit()
+
+    # Push one job per attempt onto the Redis queue
+    jobs = [
+        json.dumps({
+            "attempt_id": str(row.id),
+            "question_id": str(row.question_id),
+            "question_version": row.question_version,
+            "selected": row.selected,
+            "user_id": body.user_id,
+        })
+        for row in attempt_rows
+    ]
+    await redis_client.rpush(QUEUE_KEY, *jobs)
+
+    queue_depth = await redis_client.llen(QUEUE_KEY)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    logger.info(
+        "submit_async user=%s queued=%d queue_depth=%d elapsed_ms=%s",
+        body.user_id, len(jobs), queue_depth, elapsed_ms,
+    )
+
+    return {
+        "mode": "async",
+        "elapsed_ms": elapsed_ms,
+        "queued": len(jobs),
+        "queue_depth": queue_depth,
+        "attempt_ids": [str(r.id) for r in attempt_rows],
+    }
+
+
+@app.get("/users/{user_id}/stats")
+async def get_user_stats(user_id: str):
+    async with AsyncSessionLocal() as session:
+        stats = await session.get(UserStats, user_id)
+    if stats is None:
+        return {"user_id": user_id, "total_attempted": 0, "total_correct": 0, "accuracy_by_topic": {}}
+    return {
+        "user_id": stats.user_id,
+        "total_attempted": stats.total_attempted,
+        "total_correct": stats.total_correct,
+        "accuracy": round(stats.total_correct / max(stats.total_attempted, 1) * 100, 1),
+        "accuracy_by_topic": stats.accuracy_by_topic,
+        "updated_at": stats.updated_at.isoformat() if stats.updated_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Observability
 # ---------------------------------------------------------------------------
 
@@ -323,6 +520,7 @@ async def debug_metrics():
     """Dump Redis info useful for observing cache behavior."""
     info = await redis_client.info("stats")
     keyspace = await redis_client.info("keyspace")
+    queue_depth = await redis_client.llen(QUEUE_KEY)
     return {
         "redis_keyspace_hits": info.get("keyspace_hits"),
         "redis_keyspace_misses": info.get("keyspace_misses"),
@@ -331,6 +529,7 @@ async def debug_metrics():
             / max(info.get("keyspace_hits", 0) + info.get("keyspace_misses", 0), 1),
             4,
         ),
+        "queue_depth": queue_depth,
         "keyspace": keyspace,
     }
 

@@ -9,6 +9,8 @@ export default defineConfig({
     proxy: {
       '/tests': { target: 'http://api:8000', changeOrigin: true },
       '/questions': { target: 'http://api:8000', changeOrigin: true },
+      '/attempts': { target: 'http://api:8000', changeOrigin: true },
+      '/users': { target: 'http://api:8000', changeOrigin: true },
     },
   },
 })

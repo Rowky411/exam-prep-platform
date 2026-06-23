@@ -42,6 +42,20 @@ services:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  worker:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://examprep:examprep@postgres:5432/examprep
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python worker.py
+
   frontend:
     build: ./frontend
     ports:
