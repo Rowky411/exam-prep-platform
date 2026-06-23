@@ -66,3 +66,12 @@ class UserStats(Base):
     total_correct = Column(Integer, nullable=False, default=0)
     accuracy_by_topic = Column(JSONB, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    clerk_id = Column(Text, primary_key=True)
+    email = Column(Text, nullable=False, default="")
+    role = Column(Text, nullable=False, default="student")  # student | admin
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

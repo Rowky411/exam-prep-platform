@@ -5,12 +5,13 @@ import random
 import time
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, text
 
+from app.auth import get_current_user
 from app.db import AsyncSessionLocal, engine
-from app.models import Attempt, Base, Question, Test, UserStats
+from app.models import Attempt, Base, Question, Test, User, UserStats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -345,13 +346,15 @@ class AnswerItem(BaseModel):
 
 
 class SubmitAttempts(BaseModel):
-    user_id: str = "demo_user"
     test_id: str | None = None
     answers: list[AnswerItem]
 
 
 @app.post("/attempts/sync", status_code=201)
-async def submit_attempts_sync(body: SubmitAttempts):
+async def submit_attempts_sync(
+    body: SubmitAttempts,
+    current_user: User = Depends(get_current_user),
+):
     """
     Phase 5a: synchronous write path.
     Fetches questions, scores every answer inline, writes attempts + user_stats
@@ -385,7 +388,7 @@ async def submit_attempts_sync(body: SubmitAttempts):
     for ans, res in zip(body.answers, results):
         attempt_rows.append(Attempt(
             id=_uuid.uuid4(),
-            user_id=body.user_id,
+            user_id=current_user.clerk_id,
             test_id=body.test_id,
             question_id=ans.question_id,
             question_version=ans.question_version,
@@ -398,9 +401,9 @@ async def submit_attempts_sync(body: SubmitAttempts):
     async with AsyncSessionLocal() as session:
         session.add_all(attempt_rows)
 
-        stats = await session.get(UserStats, body.user_id)
+        stats = await session.get(UserStats, current_user.clerk_id)
         if stats is None:
-            stats = UserStats(user_id=body.user_id, total_attempted=0, total_correct=0, accuracy_by_topic={})
+            stats = UserStats(user_id=current_user.clerk_id, total_attempted=0, total_correct=0, accuracy_by_topic={})
             session.add(stats)
 
         stats.total_attempted += len(results)
@@ -421,7 +424,7 @@ async def submit_attempts_sync(body: SubmitAttempts):
     correct = sum(1 for r in results if r["is_correct"])
     logger.info(
         "submit_sync user=%s answers=%d correct=%d db_query_count=%d elapsed_ms=%s",
-        body.user_id, total, correct, db_q + 1, elapsed_ms,
+        current_user.clerk_id, total, correct, db_q + 1, elapsed_ms,
     )
 
     return {
@@ -433,7 +436,10 @@ async def submit_attempts_sync(body: SubmitAttempts):
 
 
 @app.post("/attempts", status_code=202)
-async def submit_attempts_async(body: SubmitAttempts):
+async def submit_attempts_async(
+    body: SubmitAttempts,
+    current_user: User = Depends(get_current_user),
+):
     """
     Phase 5b: async write path.
     Writes unscored attempt rows immediately, pushes one job per attempt onto
@@ -451,7 +457,7 @@ async def submit_attempts_async(body: SubmitAttempts):
     attempt_rows = [
         Attempt(
             id=_uuid.uuid4(),
-            user_id=body.user_id,
+            user_id=current_user.clerk_id,
             test_id=body.test_id,
             question_id=ans.question_id,
             question_version=ans.question_version,
@@ -473,7 +479,7 @@ async def submit_attempts_async(body: SubmitAttempts):
             "question_id": str(row.question_id),
             "question_version": row.question_version,
             "selected": row.selected,
-            "user_id": body.user_id,
+            "user_id": current_user.clerk_id,
         })
         for row in attempt_rows
     ]
@@ -483,7 +489,7 @@ async def submit_attempts_async(body: SubmitAttempts):
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
     logger.info(
         "submit_async user=%s queued=%d queue_depth=%d elapsed_ms=%s",
-        body.user_id, len(jobs), queue_depth, elapsed_ms,
+        current_user.clerk_id, len(jobs), queue_depth, elapsed_ms,
     )
 
     return {
@@ -519,8 +525,22 @@ async def leaderboard(limit: int = 10):
     ]
 
 
+@app.get("/me")
+async def get_me(current_user: User = Depends(get_current_user)):
+    return {
+        "clerk_id": current_user.clerk_id,
+        "email": current_user.email,
+        "role": current_user.role,
+    }
+
+
 @app.get("/users/{user_id}/stats")
-async def get_user_stats(user_id: str):
+async def get_user_stats(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.clerk_id != user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
     async with AsyncSessionLocal() as session:
         stats = await session.get(UserStats, user_id)
     if stats is None:

@@ -1,9 +1,17 @@
 import { useState } from 'react'
+import {
+  SignedIn,
+  SignedOut,
+  SignIn,
+  SignUp,
+  UserButton,
+  useAuth,
+  useUser,
+} from '@clerk/clerk-react'
 import QuestionRenderer from './QuestionRenderer.jsx'
 
 const SUBJECTS = ['Physics', 'Mathematics']
 const EXAM_TAGS = ['HSC', 'admission', 'BCS']
-const USER_ID = 'demo_user'
 
 function buildSelected(type, answer) {
   if (answer == null || answer === '' || (Array.isArray(answer) && answer.length === 0)) return null
@@ -13,10 +21,26 @@ function buildSelected(type, answer) {
   return null
 }
 
+function useAuthFetch() {
+  const { getToken } = useAuth()
+  return async (url, options = {}) => {
+    const token = await getToken()
+    return fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+        Authorization: `Bearer ${token}`,
+      },
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Assembly form
 // ---------------------------------------------------------------------------
 function AssemblyForm({ onTest, loading }) {
+  const authFetch = useAuthFetch()
   const [form, setForm] = useState({ subject: 'Physics', exam_tag: '', difficulty: '', count: 10, title: '' })
   const [loadId, setLoadId] = useState('')
   const [error, setError] = useState('')
@@ -87,13 +111,15 @@ function AssemblyForm({ onTest, loading }) {
 }
 
 // ---------------------------------------------------------------------------
-// Result screen shown after submit
+// Result screen
 // ---------------------------------------------------------------------------
 function ResultScreen({ result, onBack }) {
+  const { user } = useUser()
+  const authFetch = useAuthFetch()
   const [stats, setStats] = useState(null)
 
   const fetchStats = async () => {
-    const res = await fetch(`/users/${USER_ID}/stats`)
+    const res = await authFetch(`/users/${user.id}/stats`)
     setStats(await res.json())
   }
 
@@ -121,7 +147,7 @@ function ResultScreen({ result, onBack }) {
           <p style={{ marginBottom: '0.75rem', fontSize: '0.9rem', color: '#555' }}>
             Worker is draining the queue. Check stats once it finishes:
           </p>
-          <button onClick={fetchStats} className="secondary">Fetch /users/{USER_ID}/stats</button>
+          <button onClick={fetchStats} className="secondary">Fetch my stats</button>
           {stats && (
             <pre style={{ marginTop: '0.75rem', fontSize: '0.8rem', background: '#f3f4f6', padding: '0.75rem', borderRadius: '4px', overflowX: 'auto' }}>
               {JSON.stringify(stats, null, 2)}
@@ -141,6 +167,7 @@ function ResultScreen({ result, onBack }) {
 // Test view
 // ---------------------------------------------------------------------------
 function TestView({ testId, onBack }) {
+  const authFetch = useAuthFetch()
   const [test, setTest] = useState(null)
   const [answers, setAnswers] = useState({})
   const [loading, setLoading] = useState(true)
@@ -184,10 +211,9 @@ function TestView({ testId, onBack }) {
 
     const endpoint = mode === 'sync' ? '/attempts/sync' : '/attempts'
     try {
-      const res = await fetch(endpoint, {
+      const res = await authFetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: USER_ID, test_id: testId, answers: answers_payload }),
+        body: JSON.stringify({ test_id: testId, answers: answers_payload }),
       })
       if (!res.ok) throw new Error((await res.json()).detail ?? res.statusText)
       setResult(await res.json())
@@ -241,9 +267,32 @@ function TestView({ testId, onBack }) {
 }
 
 // ---------------------------------------------------------------------------
-// Root
+// Auth screen (shown when signed out)
 // ---------------------------------------------------------------------------
-export default function App() {
+function AuthScreen() {
+  const [mode, setMode] = useState('signin')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '3rem' }}>
+      <h1 style={{ marginBottom: '1.5rem' }}>Exam Prep</h1>
+      {mode === 'signin'
+        ? <SignIn routing="hash" />
+        : <SignUp routing="hash" />
+      }
+      <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#6b7280' }}>
+        {mode === 'signin'
+          ? <><span>No account? </span><button className="link-btn" onClick={() => setMode('signup')}>Create one</button></>
+          : <><span>Already have an account? </span><button className="link-btn" onClick={() => setMode('signin')}>Sign in</button></>
+        }
+      </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main app (shown when signed in)
+// ---------------------------------------------------------------------------
+function MainApp() {
+  const { user } = useUser()
   const [testId, setTestId] = useState(null)
   const [loading, setLoading] = useState(false)
 
@@ -251,11 +300,33 @@ export default function App() {
 
   return (
     <div>
-      <h1>Exam Prep</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <h1 style={{ margin: 0 }}>Exam Prep</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>{user?.primaryEmailAddress?.emailAddress}</span>
+          <UserButton afterSignOutUrl="/" />
+        </div>
+      </div>
       {!testId
         ? <AssemblyForm onTest={handleTest} loading={loading} />
         : <TestView testId={testId} onBack={() => setTestId(null)} />
       }
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Root
+// ---------------------------------------------------------------------------
+export default function App() {
+  return (
+    <>
+      <SignedIn>
+        <MainApp />
+      </SignedIn>
+      <SignedOut>
+        <AuthScreen />
+      </SignedOut>
+    </>
   )
 }

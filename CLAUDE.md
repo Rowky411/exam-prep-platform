@@ -1,18 +1,20 @@
-# Exam-Prep MVP — Architecture Brief & Build Plan
+# Exam-Prep — Architecture Brief & Build Plan
 
-> Drop this file in the repo root. Claude Code reads it every session — it is the shared
-> source of truth for **what we're building, why, and in what order**. Keep it updated as
-> the build progresses.
+> Shared source of truth for **what we're building, why, and in what order**.
+> Keep it updated as the build progresses.
+>
+> **Status:** MVP engine complete (Phases 0–6 ✅). Now building the product around the engine.
+> Target = **presentable, not production**. A person can sign up, take a test end-to-end on
+> their phone, review their answers, see their progress, and you can send the link to someone.
 
 ---
 
 ## 1. Purpose of this project
 
-This is a **learning MVP**, not a production system. Its job is to make the core mechanisms
-of a scalable exam-prep platform **visible and touchable** at small scale. Success = the
-developer can run the system, generate load, and *watch* each mechanism work.
-
-Optimize every decision for **clarity and observability**, never for scale or polish.
+Started as a **learning MVP** to make the core mechanisms of a scalable exam-prep platform
+visible and touchable. Those mechanisms are now built and load-tested. This stage builds
+the **product around the engine**: real accounts, a complete student journey, analytics,
+content management, and a design system worth showing.
 
 ---
 
@@ -21,13 +23,10 @@ Optimize every decision for **clarity and observability**, never for scale or po
 Separate **static content** from **dynamic user state**. They have opposite characteristics
 and are stored, served, and scaled differently:
 
-- **Questions** — read-heavy, near-immutable, *shared by every user*. Treated as a cacheable
-  asset keyed by `question_id + version`.
-- **Attempts** — write-heavy, *unique per user*. Recorded fast, then scored/aggregated
-  asynchronously.
+- **Questions** — read-heavy, near-immutable, *shared by every user*. Cached at `question_id + version`.
+- **Attempts** — write-heavy, *unique per user*. Recorded fast, scored asynchronously.
 
-Reads (questions) and writes (attempts) must never share a hot path. If you find yourself
-fetching a question through the same code that writes an answer, stop and split them.
+Reads and writes must never share a hot path.
 
 ```
 Client
@@ -37,44 +36,40 @@ Client
 
 ---
 
-## 3. Guiding principles for this build
+## 3. Guiding principles
 
-1. **Build the architecture, fake the ops.** Keep every architecturally instructive piece;
-   skip operationally heavy ones. Localhost Redis teaches the same lesson a CDN does.
-2. **Instrument everything.** Every cache hit/miss, DB query count per request, and queue
-   depth must be logged. The learning is in *observing*, not just writing the code.
-3. **Vertical slices.** Build one runnable phase at a time. Do not start a phase until the
-   previous one runs and has been poked at.
+1. **Build the architecture, fake the ops.** Localhost Redis teaches the same lesson a CDN does.
+2. **Instrument everything.** Cache hit/miss, DB query count, queue depth logged per request.
+3. **Vertical slices.** One runnable phase at a time. Verify before moving on.
 4. **No premature abstraction.** Smallest thing that demonstrates the mechanism wins.
+5. **Static vs dynamic split is sacred.** New read features go through the cache; new writes go through the async path.
 
 ---
 
 ## 4. Tech stack
 
-| Layer        | Choice                                   | Notes |
-|--------------|------------------------------------------|-------|
-| Backend      | FastAPI (Python 3.11+)                    | One service for now |
-| Source of truth | PostgreSQL                            | `jsonb` for flexible question bodies |
-| Cache + queue| Redis                                     | Cache layer AND the job queue |
-| Worker       | A simple Redis-backed worker (RQ or a hand-rolled loop) | Must be a *separate process* from the API |
-| Frontend     | React + Vite                              | One question renderer driven by `type` |
-| Math render  | KaTeX (client-side)                       | Questions store Markdown + LaTeX, never HTML |
-| Orchestration| Docker Compose                            | `docker compose up` brings up the whole system |
-| Load testing | k6 or Locust                              | Used in the final phase |
+| Layer           | Choice                                    | Notes |
+|-----------------|-------------------------------------------|-------|
+| Backend         | FastAPI (Python 3.11+)                    | One service |
+| Source of truth | PostgreSQL                                | `jsonb` for flexible question bodies |
+| Cache + queue   | Redis                                     | Cache layer AND the job queue |
+| Worker          | Hand-rolled async loop (`worker.py`)      | Separate process from the API |
+| Frontend        | React + Vite                              | One question renderer driven by `type` |
+| Math render     | KaTeX (client-side)                       | Questions store Markdown + LaTeX, never HTML |
+| Orchestration   | Docker Compose                            | `docker compose up` brings up the whole system |
+| Load testing    | k6                                        | `docker compose --profile load-test run --rm k6` |
+| Auth            | Managed provider (Auth.js / Supabase Auth / Clerk) | Do NOT hand-roll prod auth |
+| Charts          | Recharts                                  | For progress / analytics screens |
 
 ---
 
-## 5. Deliberate deferrals — do NOT build these yet
-
-These are real production needs but add ops complexity without teaching new mechanisms.
-Leave clear `# DEFERRED:` comments where they'd eventually go.
+## 5. Deliberate deferrals
 
 - CDN (localhost only for now)
 - Elasticsearch / dedicated search index → use Postgres indexes + full-text search
-- Authentication / real users → a hardcoded or header-supplied `user_id` is fine
 - Cloud infra, autoscaling, Kubernetes
 - Anti-piracy, watermarking, payments
-- Offline packs (this is optional Phase 7, not core)
+- Hosting / deployment → Phase 13, deferred until feature-complete
 
 ---
 
@@ -95,14 +90,14 @@ Leave clear `# DEFERRED:` comments where they'd eventually go.
 | options       | jsonb     | `[{id, text}]` (null for numerical) |
 | correct       | jsonb     | answer key |
 | explanation   | text      | Markdown + LaTeX |
-| media         | jsonb     | `[url, ...]` (object-storage URLs; local paths fine for MVP) |
+| media         | jsonb     | `[url, ...]` |
 | language      | text      | |
 | is_active     | bool      | soft delete |
 | created_at / updated_at | timestamptz | |
 
 Index on `(subject, chapter, topic, difficulty, exam_tag)` for test assembly.
 
-### `tests` (an assembled test = an ordered list of question IDs)
+### `tests`
 `id`, `title`, `question_ids jsonb`, `filters jsonb`, `created_at`
 
 ### `attempts`
@@ -116,85 +111,147 @@ Index on `(subject, chapter, topic, difficulty, exam_tag)` for test assembly.
 
 ## 7. Contracts to honor
 
-**Cache contract.** Key = `q:{id}:v{version}` → serialized question payload (JSON).
-Long TTL. On edit, bump `version` → a *new key* is written, so cache invalidation is free
-and stale reads are impossible. Reads check Redis first; a miss falls through to Postgres
-and back-fills the cache.
+**Cache contract.** Key = `q:{id}:v{version}`. On edit, bump `version` → new key written,
+stale reads impossible. Reads check Redis first; miss falls through to Postgres and back-fills.
 
-**Async write contract.** On submit: (1) write raw `attempts` rows immediately as
-*unscored*, (2) push a job to the Redis queue, (3) return fast. A separate worker process
-scores attempts and updates `user_stats`. The API never scores synchronously (except in
-Phase 5a below, on purpose, so the difference can be felt).
+**Async write contract.** On submit: (1) write unscored `attempts` rows, (2) push job to
+Redis queue, (3) return fast. Worker scores and updates `user_stats`. API never scores
+synchronously in production paths.
 
-**Instrumentation contract.** Structured logs must include, per request: `cache_hit`/`cache_miss`,
-`db_query_count`. The worker logs `queue_depth` and per-job processing time. Expose a
-`/debug/metrics` endpoint that dumps these counters.
+**Instrumentation contract.** Logs per request: `cache_hit`/`cache_miss`, `db_query_count`.
+Worker logs `queue_depth` + per-job time. `/debug/metrics` dumps live counters.
 
 ---
 
-## 8. Build phases
+## 8. Design direction (read before any UI work in Phases 9 and 12)
 
-Each phase is independently runnable. Finish and verify before moving on. **Commit after
-each working phase.**
+**Subject, audience, job:** exam-prep for students taking high-stakes exams, used heavily on
+**low-end Android phones over patchy connections**. One job: let a student take a test and
+learn from the result with zero friction. Calm, focused, trustworthy — a study tool, not a game.
 
-### Phase 0 — Skeleton
-- Docker Compose with Postgres + Redis; FastAPI app boots; healthcheck endpoint.
-- **Verify:** `docker compose up` → `GET /health` returns 200.
+**Process before building UI:**
+1. Define a compact token system — Color (4–6 hex values), Type (display + body + utility faces),
+   Layout concept, one Signature element the product is remembered by.
+2. Critique against the brief. Specifically avoid the three AI-default looks:
+   (a) cream + high-contrast serif + terracotta; (b) near-black + acid-green/vermilion accent;
+   (c) broadsheet hairline-rule columns. If a token reads like a default, revise and note why.
 
-### Phase 1 — Data model + seed
-- Create the `questions` schema and a seed script loading ~300 questions across 2 subjects,
-  multiple chapters/topics/difficulties, including at least a few with LaTeX in the stem.
-- **Mechanism:** question modeling & taxonomy.
-- **Verify:** query the DB and see varied, well-tagged questions.
+**Non-negotiable quality floor:**
+- Mobile-first, responsive to small/low-end screens.
+- Visible keyboard focus; respect `prefers-reduced-motion`.
+- Every screen has real loading, empty, and error states — never a blank flash.
+- Spend boldness in one place (the signature); keep everything else quiet.
 
-### Phase 2 — Read path with caching
-- `GET /questions/{id}` fronted by Redis (`q:{id}:v{version}`), with hit/miss + db_query_count
-  logging.
-- **Mechanism:** the left lane — static content barely touches the DB.
-- **Verify:** first fetch = miss + 1 DB query; subsequent fetches = hit + 0 DB queries.
-
-### Phase 3 — Test assembly
-- `POST /tests` accepts filters (subject/topic/difficulty/count) → builds and stores an
-  ordered `question_ids` list. `GET /tests/{id}` returns the test with cached question payloads.
-- **Mechanism:** a test is just an ID list served from cache.
-- **Verify:** assembling a test issues few DB queries; fetching it hits cache.
-
-### Phase 4 — Frontend renderer
-- React + Vite app: fetch a test, render each question through **one** component switched on
-  `type`, with KaTeX for math. Take a test in the browser.
-- **Mechanism:** server ships data, client renders.
-- **Verify:** MCQ, true/false, and a LaTeX question all render and are answerable.
-
-### Phase 5 — Write path (sync first, then async)
-- **5a (sync):** `POST /attempts` records answers and scores them *synchronously*. Note the
-  latency.
-- **5b (async):** records attempts as unscored, pushes jobs to the Redis queue; a **separate
-  worker process** scores them and updates `user_stats`. Compare latency to 5a.
-- **Mechanism:** the right lane — decoupling writes from scoring.
-- **Verify:** under a burst of submissions, 5b stays fast while the queue drains in the
-  background.
-
-### Phase 6 — Analytics + load test
-- Worker maintains `user_stats` and a simple leaderboard. Add a k6/Locust script that fires
-  many concurrent reads and writes.
-- **Mechanism:** everything under pressure — the payoff phase.
-- **Verify:** during load, watch `/debug/metrics`: cache hit-rate stays high, question-bank
-  DB stays nearly idle, queue depth rises then drains.
-
-### Phase 7 — Offline pack (optional)
-- `GET /tests/{id}/pack` returns a self-contained JSON bundle. Take the test "offline",
-  then sync attempts on reconnect.
-- **Mechanism:** why the static/dynamic split enables offline (ties to nationwide reach).
+**Interface copy rules:**
+- Name things by what the user controls. Active voice on actions ("Submit test", not "Submit").
+- An action keeps the same name through the whole flow.
+- Errors don't apologize and are never vague — say what happened and how to fix it.
+- Empty screens invite action ("No tests yet — start with a practice set").
 
 ---
 
-## 9. Working conventions for Claude Code
+## 9. Build phases
 
-- **One phase per session.** A focused request ("build Phase 2: the cached read endpoint
-  with hit/miss logging") beats "build the backend."
-- **Explain as you go.** The goal is the developer *understanding* the mechanisms — annotate
-  non-obvious choices and explain tradeoffs, don't just emit code.
+### ✅ Phase 0 — Skeleton
+Docker Compose with Postgres + Redis; FastAPI boots; `/health` returns 200.
+
+### ✅ Phase 1 — Data model + seed
+`questions` schema + seed script (~300 questions, 2 subjects, LaTeX stems).
+
+### ✅ Phase 2 — Read path with caching
+`GET /questions/{id}` fronted by Redis (`q:{id}:v{version}`). First fetch = miss + 1 DB query;
+subsequent = hit + 0 DB queries.
+
+### ✅ Phase 3 — Test assembly
+`POST /tests` (filter → sample → store ID list). `GET /tests/{id}` serves from cache.
+Batch Redis lookup: 2 round-trips regardless of question count, 0 DB queries on warm cache.
+
+### ✅ Phase 4 — Frontend renderer
+React + Vite. One `QuestionRenderer` component switched on `type`. KaTeX for math.
+MCQ (radio), multi-MCQ (checkbox), true/false, numerical all render and are answerable.
+
+### ✅ Phase 5 — Write path (sync + async)
+- **5a sync:** `POST /attempts/sync` — scores inline, ~9ms baseline.
+- **5b async:** `POST /attempts` — writes unscored rows, pushes to Redis queue, ~4ms.
+- Worker (`worker.py`) drains queue, scores, updates `user_stats`.
+
+### ✅ Phase 6 — Analytics + load test
+`/leaderboard` endpoint. k6 script: 40 VUs, 90s, 70% reads / 30% writes.
+Results: read p95 = 3.99ms, write p95 = 19.46ms, cache hit rate = 99.97%, 0 errors.
+
+---
+
+### Phase 7 — Offline pack (optional, skipped for now)
+`GET /tests/{id}/pack` returns a self-contained JSON bundle. Take offline, sync on reconnect.
+Mechanism: why the static/dynamic split enables offline.
+
+---
+
+### Phase 8 — Accounts & identity
+Replace hardcoded `user_id` with real accounts via managed auth provider.
+- Signup / login / logout, sessions (JWT or server sessions).
+- Two roles: **student** and **admin**. Route guards for each.
+- Wire authenticated `user_id` into existing attempts/stats paths.
+- **Verify:** two separate accounts each see only their own attempts and stats.
+
+### Phase 9 — The complete student journey
+Build the full loop. Take-test and review screens are where polish shows.
+- **Dashboard:** continue in-progress test, list available tests, recent performance snapshot.
+- **Take-test:** countdown timer; question palette (answered / unanswered / flagged);
+  next/prev + jump-to-question; flag for review; **autosave answers** (dropped connection
+  must never wipe progress — this is the patchy-internet story made real).
+- **Results page:** score, time taken, pass/percentile.
+- **Answer review:** every question with correct answer, explanation, and student's choice.
+  This is the most valuable screen for exam prep — give it real care.
+- **Verify:** take a timed test on phone-sized viewport, lose + restore connection mid-test
+  without losing answers, submit, and review every answer.
+
+### Phase 10 — Student progress & analytics
+Surface the `user_stats` the worker already computes — this is the retention hook.
+- Per-topic accuracy, strengths/weaknesses, progress over time, full attempt history.
+- A couple of clean Recharts charts. Legible on mobile.
+- **Verify:** after several attempts, dashboard reflects accurate per-topic trends.
+
+### Phase 11 — Admin / content management
+Protected admin area so demos are self-serve instead of raw SQL.
+- CRUD for questions; assemble tests; set timers; publish/unpublish.
+- Minimal but functional; reuse the design system.
+- **Verify:** admin creates a test from UI and a student immediately sees and takes it.
+
+### Phase 12 — Design polish & mobile-first pass
+The phase that makes it genuinely presentable.
+- Apply the design system coherently across every screen.
+- Audit mobile layouts on a real small viewport; fix cramped/broken spots.
+- Confirm every loading / empty / error state exists and reads well.
+- One restrained signature moment (page-load reveal or a micro-interaction) — not scattered effects.
+- **Verify:** walk the whole app on a phone; nothing janky, blank, or templated.
+
+### Phase 13 — Deploy & demo-ready (DEFERRED — hosting not needed yet)
+Get it on a public URL.
+- Deploy app + managed Postgres + Redis to Railway/Render/Fly.
+- Seed demo data and a demo account; env-based config; no secrets in code.
+- Basic input validation everywhere; rate-limit auth endpoints.
+- **Verify:** open public URL on an unfamiliar phone, sign in with demo account, complete the full loop.
+
+---
+
+## 10. Priority order (if time is tight)
+
+| Priority | Phase | Why |
+|----------|-------|-----|
+| Must-have | 8 (auth) + 9 (the loop) | Core loop with real accounts *is* the demo |
+| Fight to keep | 10 (analytics) | What makes people lean in |
+| Can be bare-bones | 11 (admin) | Nice-to-have for self-serve demos |
+| Makes it shine | 12 (design polish) | Do as much as time allows |
+| Deferred | 13 (deploy) | Until feature-complete |
+
+---
+
+## 11. Working conventions for Claude Code
+
+- **One phase per session.** Focused request beats broad one.
+- **Explain non-obvious choices.** Goal is understanding mechanisms, not just shipping code.
 - **Always add the instrumentation** specified in the contracts; it is not optional.
-- **Keep it runnable.** Every phase ends with a working `docker compose up` and a clear
-  manual verification step.
+- **Keep it runnable.** Every phase ends with a working `docker compose up` and a clear verification step.
+- **For UI phases:** show the design token plan before building; update this file when a design or architecture decision changes.
 - **Update this file** when an architectural decision changes.

@@ -178,3 +178,14 @@ button.secondary:hover { background: #d1d5db; }
   color: #3730a3;
   margin-right: 0.3rem;
 }
+
+button.link-btn {
+  background: none;
+  color: #2563eb;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+button.link-btn:hover { color: #1d4ed8; background: none; }

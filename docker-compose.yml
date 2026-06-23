@@ -33,6 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql://examprep:examprep@postgres:5432/examprep
       REDIS_URL: redis://redis:6379
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

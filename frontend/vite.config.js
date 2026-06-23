@@ -11,6 +11,7 @@ export default defineConfig({
       '/questions': { target: 'http://api:8000', changeOrigin: true },
       '/attempts': { target: 'http://api:8000', changeOrigin: true },
       '/users': { target: 'http://api:8000', changeOrigin: true },
+      '/me': { target: 'http://api:8000', changeOrigin: true },
       '/leaderboard': { target: 'http://api:8000', changeOrigin: true },
       '/debug': { target: 'http://api:8000', changeOrigin: true },
     },
