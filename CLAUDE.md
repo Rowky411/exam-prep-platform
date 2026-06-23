@@ -187,7 +187,7 @@ Mechanism: why the static/dynamic split enables offline.
 
 ---
 
-### Phase 8 — Accounts & identity
+### Phase 8 — Accounts & identity --done
 Replace hardcoded `user_id` with real accounts via managed auth provider.
 - Signup / login / logout, sessions (JWT or server sessions).
 - Two roles: **student** and **admin**. Route guards for each.

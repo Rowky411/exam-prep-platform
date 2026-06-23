@@ -41,6 +41,7 @@ class Test(Base):
     title = Column(Text, nullable=False)
     question_ids = Column(JSONB, nullable=False)  # ordered list of question UUIDs
     filters = Column(JSONB)                        # the assembly filters used
+    duration_minutes = Column(Integer, nullable=True)  # None = untimed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

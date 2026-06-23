@@ -192,6 +192,7 @@ class TestCreate(BaseModel):
     difficulty: int | None = None  # 1–5
     exam_tag: str | None = None
     count: int = 10
+    duration_minutes: int | None = None  # None = untimed
 
 
 @app.post("/tests", status_code=201)
@@ -231,9 +232,9 @@ async def create_test(body: TestCreate):
 
     selected_ids = random.sample(all_ids, min(body.count, len(all_ids)))
 
-    filters = {k: v for k, v in body.model_dump(exclude={"title", "count"}).items() if v is not None}
+    filters = {k: v for k, v in body.model_dump(exclude={"title", "count", "duration_minutes"}).items() if v is not None}
 
-    test = Test(title=body.title, question_ids=selected_ids, filters=filters)
+    test = Test(title=body.title, question_ids=selected_ids, filters=filters, duration_minutes=body.duration_minutes)
     async with AsyncSessionLocal() as session:
         session.add(test)
         await session.commit()
@@ -245,6 +246,7 @@ async def create_test(body: TestCreate):
         "title": test.title,
         "question_ids": test.question_ids,
         "filters": test.filters,
+        "duration_minutes": test.duration_minutes,
         "created_at": test.created_at.isoformat(),
     }
     # Cache test metadata so GET /tests/{id} skips Postgres on warm reads
@@ -290,6 +292,7 @@ async def get_test(test_id: str):
             "title": test.title,
             "question_ids": test.question_ids,
             "filters": test.filters,
+            "duration_minutes": test.duration_minutes,
             "created_at": test.created_at.isoformat(),
         }
         await redis_client.set(f"t:{test_id}", json.dumps(test_data))
@@ -309,10 +312,31 @@ async def get_test(test_id: str):
         "id": test_data["id"],
         "title": test_data["title"],
         "filters": test_data["filters"],
+        "duration_minutes": test_data.get("duration_minutes"),
         "created_at": test_data["created_at"],
         "question_count": len(questions),
         "questions": questions,
     }
+
+
+@app.get("/tests")
+async def list_tests(limit: int = 30):
+    """Phase 9: list tests for the dashboard, newest first."""
+    async with AsyncSessionLocal() as session:
+        stmt = select(Test).order_by(Test.created_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        tests = result.scalars().all()
+    return [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "question_count": len(t.question_ids or []),
+            "filters": t.filters,
+            "duration_minutes": t.duration_minutes,
+            "created_at": t.created_at.isoformat(),
+        }
+        for t in tests
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +577,56 @@ async def get_user_stats(
         "accuracy_by_topic": stats.accuracy_by_topic,
         "updated_at": stats.updated_at.isoformat() if stats.updated_at else None,
     }
+
+
+@app.get("/users/{user_id}/review/{test_id}")
+async def get_review(
+    user_id: str,
+    test_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Phase 9: return attempts with embedded question data, ordered by test question sequence."""
+    if current_user.clerk_id != user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Test question order (cache first)
+    test_payload = await redis_client.get(f"t:{test_id}")
+    if test_payload:
+        ordered_qids = json.loads(test_payload)["question_ids"]
+    else:
+        async with AsyncSessionLocal() as session:
+            test = await session.get(Test, test_id)
+        if test is None:
+            raise HTTPException(status_code=404, detail="test not found")
+        ordered_qids = test.question_ids
+
+    async with AsyncSessionLocal() as session:
+        stmt = select(Attempt).where(
+            Attempt.user_id == user_id,
+            Attempt.test_id == test_id,
+        )
+        result = await session.execute(stmt)
+        attempts = result.scalars().all()
+
+    # Most-recent attempt per question
+    attempt_map: dict[str, Attempt] = {}
+    for a in attempts:
+        qid = str(a.question_id)
+        if qid not in attempt_map or a.submitted_at > attempt_map[qid].submitted_at:
+            attempt_map[qid] = a
+
+    questions, _, _, _ = await _fetch_questions_cached(ordered_qids)
+    q_map = {q["id"]: q for q in questions}
+
+    return [
+        {
+            "question_id": qid,
+            "question": q_map.get(qid),
+            "selected": attempt_map[qid].selected if qid in attempt_map else None,
+            "is_correct": attempt_map[qid].is_correct if qid in attempt_map else None,
+        }
+        for qid in ordered_qids
+    ]
 
 
 # ---------------------------------------------------------------------------
