@@ -66,5 +66,17 @@ services:
       - ./frontend:/app
       - /app/node_modules
 
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./load-test:/scripts
+    environment:
+      BASE_URL: http://api:8000
+    depends_on:
+      - api
+    profiles:
+      - load-test
+    command: run /scripts/k6.js
+
 volumes:
   postgres_data:

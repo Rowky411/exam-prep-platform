@@ -495,6 +495,30 @@ async def submit_attempts_async(body: SubmitAttempts):
     }
 
 
+@app.get("/leaderboard")
+async def leaderboard(limit: int = 10):
+    """Phase 6: top users by total_correct, used to verify worker is updating stats under load."""
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(UserStats)
+            .where(UserStats.total_attempted > 0)
+            .order_by(UserStats.total_correct.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    return [
+        {
+            "rank": i + 1,
+            "user_id": r.user_id,
+            "total_attempted": r.total_attempted,
+            "total_correct": r.total_correct,
+            "accuracy": round(r.total_correct / max(r.total_attempted, 1) * 100, 1),
+        }
+        for i, r in enumerate(rows)
+    ]
+
+
 @app.get("/users/{user_id}/stats")
 async def get_user_stats(user_id: str):
     async with AsyncSessionLocal() as session:
