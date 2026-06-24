@@ -446,3 +446,58 @@ button.link-btn:hover { color: #1d4ed8; background: none; }
   .score-number { font-size: 2rem; }
   .palette-btn { width: 2rem; height: 2rem; font-size: 0.75rem; }
 }
+
+/* ── Phase 10 ── */
+
+.loading-msg { color: #9ca3af; padding: 2rem 0; text-align: center; }
+
+/* Strengths / weaknesses */
+.sw-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.sw-heading { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+.sw-strong-heading { color: #16a34a; }
+.sw-weak-heading { color: #dc2626; }
+.sw-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  border-radius: 5px;
+  margin-bottom: 0.35rem;
+  font-size: 0.9rem;
+}
+.sw-strong { background: #f0fdf4; }
+.sw-weak { background: #fef2f2; }
+.sw-topic { font-weight: 500; }
+.sw-pct { font-weight: 700; }
+
+/* Attempt history */
+.history-list { display: flex; flex-direction: column; gap: 0; }
+.history-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid #f3f4f6;
+  gap: 1rem;
+}
+.history-row:last-child { border-bottom: none; }
+
+/* Score badges */
+.score-badge {
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.score-pass { background: #dcfce7; color: #15803d; }
+.score-mid  { background: #dbeafe; color: #1d4ed8; }
+.score-fail { background: #fee2e2; color: #b91c1c; }
+
+@media (max-width: 480px) {
+  .sw-grid { grid-template-columns: 1fr; }
+}

@@ -7,7 +7,7 @@ import time
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import case, func, select, text
 
 from app.auth import get_current_user
 from app.db import AsyncSessionLocal, engine
@@ -577,6 +577,51 @@ async def get_user_stats(
         "accuracy_by_topic": stats.accuracy_by_topic,
         "updated_at": stats.updated_at.isoformat() if stats.updated_at else None,
     }
+
+
+@app.get("/users/{user_id}/attempts/history")
+async def get_attempt_history(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Phase 10: per-test attempt history for the progress page."""
+    if current_user.clerk_id != user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(
+                Attempt.test_id,
+                func.count(Attempt.id).label("total"),
+                func.sum(case((Attempt.is_correct == True, 1), else_=0)).label("correct"),
+                func.max(Attempt.submitted_at).label("submitted_at"),
+            )
+            .where(Attempt.user_id == user_id, Attempt.test_id.isnot(None))
+            .group_by(Attempt.test_id)
+            .order_by(func.max(Attempt.submitted_at).desc())
+            .limit(30)
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+
+        test_ids = [r.test_id for r in rows if r.test_id]
+        test_map: dict[str, str] = {}
+        if test_ids:
+            t_result = await session.execute(select(Test).where(Test.id.in_(test_ids)))
+            for t in t_result.scalars().all():
+                test_map[str(t.id)] = t.title
+
+    return [
+        {
+            "test_id": str(r.test_id),
+            "title": test_map.get(str(r.test_id), "Untitled"),
+            "total": r.total,
+            "correct": int(r.correct or 0),
+            "score_pct": round(int(r.correct or 0) / max(r.total, 1) * 100, 1),
+            "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+        }
+        for r in rows
+    ]
 
 
 @app.get("/users/{user_id}/review/{test_id}")

@@ -173,6 +173,7 @@ export default function Dashboard() {
         <h1>Exam Prep</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span className="email-label">{user?.primaryEmailAddress?.emailAddress}</span>
+          <button className="secondary" style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }} onClick={() => navigate('/progress')}>Progress</button>
           <UserButton afterSignOutUrl="/" />
         </div>
       </header>
