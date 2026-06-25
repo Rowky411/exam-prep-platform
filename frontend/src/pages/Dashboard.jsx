@@ -29,7 +29,8 @@ function StatsSnapshot({ stats }) {
   )
 }
 
-function TestList({ tests, inProgress, navigate }) {
+function TestList({ tests, loading, inProgress, navigate }) {
+  if (loading) return <p className="loading-msg">Loading tests…</p>
   if (tests.length === 0) {
     return (
       <div className="empty-state">
@@ -145,10 +146,12 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [role, setRole] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [loadingTests, setLoadingTests] = useState(true)
   const [inProgress, setInProgress] = useState(null)
 
   useEffect(() => {
-    fetch('/tests').then((r) => r.json()).then(setTests).catch(() => {})
+    setLoadingTests(true)
+    fetch('/tests').then((r) => r.json()).then(setTests).catch(() => {}).finally(() => setLoadingTests(false))
     if (user) {
       authFetch(`/users/${user.id}/stats`).then((r) => r.json()).then(setStats).catch(() => {})
       authFetch('/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
@@ -187,7 +190,7 @@ export default function Dashboard() {
 
       <div className="card">
         <h2>Tests</h2>
-        <TestList tests={tests} inProgress={inProgress} navigate={navigate} />
+        <TestList tests={tests} loading={loadingTests} inProgress={inProgress} navigate={navigate} />
       </div>
 
       <AssemblyForm onCreated={handleCreated} loading={loading} setLoading={setLoading} />

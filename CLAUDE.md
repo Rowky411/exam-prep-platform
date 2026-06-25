@@ -194,7 +194,7 @@ Replace hardcoded `user_id` with real accounts via managed auth provider.
 - Wire authenticated `user_id` into existing attempts/stats paths.
 - **Verify:** two separate accounts each see only their own attempts and stats.
 
-### Phase 9 — The complete student journey
+### Phase 9 — The complete student journey --done
 Build the full loop. Take-test and review screens are where polish shows.
 - **Dashboard:** continue in-progress test, list available tests, recent performance snapshot.
 - **Take-test:** countdown timer; question palette (answered / unanswered / flagged);
@@ -206,13 +206,13 @@ Build the full loop. Take-test and review screens are where polish shows.
 - **Verify:** take a timed test on phone-sized viewport, lose + restore connection mid-test
   without losing answers, submit, and review every answer.
 
-### Phase 10 — Student progress & analytics
+### Phase 10 — Student progress & analytics --done 
 Surface the `user_stats` the worker already computes — this is the retention hook.
 - Per-topic accuracy, strengths/weaknesses, progress over time, full attempt history.
 - A couple of clean Recharts charts. Legible on mobile.
 - **Verify:** after several attempts, dashboard reflects accurate per-topic trends.
 
-### Phase 11 — Admin / content management
+### Phase 11 — Admin / content management --done
 Protected admin area so demos are self-serve instead of raw SQL.
 - CRUD for questions; assemble tests; set timers; publish/unpublish.
 - Minimal but functional; reuse the design system.
