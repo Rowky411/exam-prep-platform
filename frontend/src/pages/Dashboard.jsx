@@ -143,6 +143,7 @@ export default function Dashboard() {
   const authFetch = useAuthFetch()
   const [tests, setTests] = useState([])
   const [stats, setStats] = useState(null)
+  const [role, setRole] = useState(null)
   const [loading, setLoading] = useState(false)
   const [inProgress, setInProgress] = useState(null)
 
@@ -150,6 +151,7 @@ export default function Dashboard() {
     fetch('/tests').then((r) => r.json()).then(setTests).catch(() => {})
     if (user) {
       authFetch(`/users/${user.id}/stats`).then((r) => r.json()).then(setStats).catch(() => {})
+      authFetch('/users/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
     }
   }, [user])
 
@@ -174,6 +176,9 @@ export default function Dashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span className="email-label">{user?.primaryEmailAddress?.emailAddress}</span>
           <button className="secondary" style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }} onClick={() => navigate('/progress')}>Progress</button>
+          {role === 'admin' && (
+            <button className="secondary" style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }} onClick={() => navigate('/admin')}>Admin</button>
+          )}
           <UserButton afterSignOutUrl="/" />
         </div>
       </header>

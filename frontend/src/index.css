@@ -501,3 +501,65 @@ button.link-btn:hover { color: #1d4ed8; background: none; }
 @media (max-width: 480px) {
   .sw-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Phase 11 ── */
+
+.question-form { margin-top: 1rem; }
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 0.75rem;
+}
+.admin-textarea {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  resize: vertical;
+  font-family: system-ui, sans-serif;
+}
+.admin-textarea.mono { font-family: 'Courier New', monospace; font-size: 0.82rem; }
+
+.admin-q-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.admin-q-row {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+}
+.admin-q-inactive { opacity: 0.55; }
+.admin-q-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.admin-q-stem { font-size: 0.9rem; color: #374151; margin: 0; }
+.admin-type-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #e0e7ff;
+  color: #3730a3;
+  padding: 0.1rem 0.45rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.active-dot { font-size: 0.78rem; font-weight: 600; }
+.active-dot-on { color: #16a34a; }
+.active-dot-off { color: #9ca3af; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f3f4f6;
+}

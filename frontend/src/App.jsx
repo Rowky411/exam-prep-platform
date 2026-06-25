@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import TakeTest from './pages/TakeTest.jsx'
 import ReviewPage from './pages/ReviewPage.jsx'
 import ProgressPage from './pages/ProgressPage.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 
 function AuthScreen() {
   const [mode, setMode] = useState('signin')
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/test/:testId" element={<TakeTest />} />
           <Route path="/review/:testId" element={<ReviewPage />} />
           <Route path="/progress" element={<ProgressPage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </SignedIn>

@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import case, func, select, text
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_admin
 from app.db import AsyncSessionLocal, engine
 from app.models import Attempt, Base, Question, Test, User, UserStats
 
@@ -672,6 +672,129 @@ async def get_review(
         }
         for qid in ordered_qids
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 — Admin / content management
+# ---------------------------------------------------------------------------
+
+class QuestionCreate(BaseModel):
+    type: str
+    subject: str
+    chapter: str
+    topic: str
+    difficulty: int
+    exam_tag: str
+    stem: str
+    options: list | None = None
+    correct: dict
+    explanation: str | None = None
+    media: list | None = None
+    language: str = "en"
+
+
+class QuestionUpdate(BaseModel):
+    type: str | None = None
+    subject: str | None = None
+    chapter: str | None = None
+    topic: str | None = None
+    difficulty: int | None = None
+    exam_tag: str | None = None
+    stem: str | None = None
+    options: list | None = None
+    correct: dict | None = None
+    explanation: str | None = None
+    language: str | None = None
+
+
+@app.get("/admin/overview")
+async def admin_overview(current_user: User = Depends(require_admin)):
+    async with AsyncSessionLocal() as session:
+        q_total = (await session.execute(select(func.count()).select_from(Question))).scalar_one()
+        q_active = (await session.execute(
+            select(func.count()).select_from(Question).where(Question.is_active == True)
+        )).scalar_one()
+        t_total = (await session.execute(select(func.count()).select_from(Test))).scalar_one()
+        u_total = (await session.execute(select(func.count()).select_from(User))).scalar_one()
+    return {"questions": q_total, "active_questions": q_active, "tests": t_total, "users": u_total}
+
+
+@app.get("/admin/questions")
+async def admin_list_questions(
+    page: int = 1,
+    per_page: int = 25,
+    subject: str | None = None,
+    current_user: User = Depends(require_admin),
+):
+    offset = (page - 1) * per_page
+    async with AsyncSessionLocal() as session:
+        conditions = []
+        if subject:
+            conditions.append(Question.subject == subject)
+        base = select(Question).where(*conditions) if conditions else select(Question)
+        total = (await session.execute(
+            select(func.count()).select_from(base.subquery())
+        )).scalar_one()
+        result = await session.execute(
+            base.order_by(Question.created_at.desc()).offset(offset).limit(per_page)
+        )
+        questions = result.scalars().all()
+    return {"total": total, "page": page, "per_page": per_page, "questions": [_question_to_dict(q) for q in questions]}
+
+
+@app.post("/admin/questions", status_code=201)
+async def admin_create_question(
+    body: QuestionCreate,
+    current_user: User = Depends(require_admin),
+):
+    q = Question(**body.model_dump())
+    async with AsyncSessionLocal() as session:
+        session.add(q)
+        await session.commit()
+        await session.refresh(q)
+    logger.info("admin_create_question id=%s by=%s", q.id, current_user.clerk_id)
+    return _question_to_dict(q)
+
+
+@app.put("/admin/questions/{question_id}")
+async def admin_update_question(
+    question_id: str,
+    body: QuestionUpdate,
+    current_user: User = Depends(require_admin),
+):
+    async with AsyncSessionLocal() as session:
+        q = await session.get(Question, question_id)
+        if q is None:
+            raise HTTPException(status_code=404, detail="question not found")
+        updates = body.model_dump(exclude_none=True)
+        for k, v in updates.items():
+            setattr(q, k, v)
+        if updates:
+            q.version += 1
+        session.add(q)
+        await session.commit()
+        await session.refresh(q)
+    await redis_client.delete(f"q:ver:{question_id}")
+    logger.info("admin_update_question id=%s v=%d by=%s", question_id, q.version, current_user.clerk_id)
+    return _question_to_dict(q)
+
+
+@app.patch("/admin/questions/{question_id}/toggle")
+async def admin_toggle_question(
+    question_id: str,
+    current_user: User = Depends(require_admin),
+):
+    async with AsyncSessionLocal() as session:
+        q = await session.get(Question, question_id)
+        if q is None:
+            raise HTTPException(status_code=404, detail="question not found")
+        q.is_active = not q.is_active
+        q.version += 1
+        session.add(q)
+        await session.commit()
+        await session.refresh(q)
+    await redis_client.delete(f"q:ver:{question_id}")
+    return {"id": str(q.id), "is_active": q.is_active}
 
 
 # ---------------------------------------------------------------------------
