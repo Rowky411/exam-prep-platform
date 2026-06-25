@@ -147,7 +147,7 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!user) return
-    authFetch('/users/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
+    authFetch('/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
     authFetch('/admin/overview').then((r) => r.json()).then(setOverview).catch(() => {})
     loadQuestions(1)
   }, [user])

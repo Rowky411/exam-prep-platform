@@ -151,7 +151,7 @@ export default function Dashboard() {
     fetch('/tests').then((r) => r.json()).then(setTests).catch(() => {})
     if (user) {
       authFetch(`/users/${user.id}/stats`).then((r) => r.json()).then(setStats).catch(() => {})
-      authFetch('/users/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
+      authFetch('/me').then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {})
     }
   }, [user])
 

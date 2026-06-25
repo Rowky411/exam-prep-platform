@@ -14,6 +14,8 @@ export default defineConfig({
       '/me': { target: 'http://api:8000', changeOrigin: true },
       '/leaderboard': { target: 'http://api:8000', changeOrigin: true },
       '/debug': { target: 'http://api:8000', changeOrigin: true },
+      '/admin/overview': { target: 'http://api:8000', changeOrigin: true },
+      '/admin/questions': { target: 'http://api:8000', changeOrigin: true },
     },
   },
 })
